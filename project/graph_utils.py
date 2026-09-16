@@ -1,5 +1,9 @@
+import pathlib
 from typing import NamedTuple
+
 import cfpq_data
+import networkx as nx
+import pydot
 
 
 class GraphInfo(NamedTuple):
@@ -23,3 +27,23 @@ def get_graph_info(graph_name: str) -> GraphInfo:
         number_of_edges=graph.number_of_edges(),
         labels=labels,
     )
+
+
+def create_two_cycles_graph(
+    n: int,
+    m: int,
+    labels: tuple[str, str],
+    filepath: str | pathlib.Path,
+) -> nx.MultiDiGraph:
+    """Build a graph with two cycles and save it to a DOT file."""
+
+    graph = cfpq_data.labeled_two_cycles_graph(n, m, labels=labels)
+
+    dot = pydot.Dot(graph_type="digraph")
+    for node in graph.nodes():
+        dot.add_node(pydot.Node(str(node)))
+    for source, target, label in graph.edges(data="label"):
+        dot.add_edge(pydot.Edge(str(source), str(target), label=str(label)))
+    dot.write_raw(str(filepath))
+
+    return graph
