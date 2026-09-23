@@ -7,16 +7,12 @@ import pydot
 
 
 class GraphInfo(NamedTuple):
-    """Information about a labeled graph."""
-
     number_of_nodes: int
     number_of_edges: int
     labels: set[str]
 
 
 def get_graph_info(graph_name: str) -> GraphInfo:
-    """Return basic information about a graph from the CFPQ_Data dataset."""
-
     graph_path = cfpq_data.download(graph_name)
     graph = cfpq_data.graph_from_csv(graph_path)
 
@@ -35,8 +31,6 @@ def create_two_cycles_graph(
     labels: tuple[str, str],
     filepath: str | pathlib.Path,
 ) -> nx.MultiDiGraph:
-    """Build a graph with two cycles and save it to a DOT file."""
-
     graph = cfpq_data.labeled_two_cycles_graph(n, m, labels=labels)
 
     dot = pydot.Dot(graph_type="digraph")
