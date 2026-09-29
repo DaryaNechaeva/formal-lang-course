@@ -1,5 +1,7 @@
+from collections.abc import Iterable
 from typing import Self
-from scipy.sparse import coo_array, csr_array
+
+from scipy.sparse import coo_array, csr_array, eye_array
 from pyformlang.finite_automaton import (
     NondeterministicFiniteAutomaton,
     State,
@@ -56,3 +58,43 @@ class AdjacencyMatrixFA:
         fa.states_count = states_count
         fa.states = states if states is not None else {}
         return fa
+
+    def accepts(self, word: Iterable[Symbol]) -> bool:
+        n = self.states_count
+        if n == 0 or not self.start_states:
+            return False
+
+        start_list = list(self.start_states)
+        current = coo_array(
+            ([True] * len(start_list), ([0] * len(start_list), start_list)),
+            shape=(1, n),
+            dtype=bool,
+        ).tocsr()
+
+        for symbol in word:
+            key = symbol if isinstance(symbol, Symbol) else Symbol(symbol)
+            if key not in self.matrices:
+                return False
+            current = (current @ self.matrices[key]).astype(bool)
+            if current.nnz == 0:
+                return False
+
+        reached = set(current.nonzero()[1])
+        return bool(reached & self.final_states)
+
+    def _transitive_closure(self) -> csr_array:
+        closure = eye_array(self.states_count, dtype=bool, format="csr")
+        for matrix in self.matrices.values():
+            closure = (closure + matrix).astype(bool)
+
+        while True:
+            prev_nnz = closure.nnz
+            closure = (closure @ closure).astype(bool)
+            if closure.nnz == prev_nnz:
+                return closure
+
+    def is_empty(self) -> bool:
+        if not self.start_states or not self.final_states:
+            return True
+        closure = self._transitive_closure()
+        return closure[list(self.start_states)][:, list(self.final_states)].nnz == 0
