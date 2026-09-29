@@ -1,7 +1,7 @@
 from collections.abc import Iterable
 from typing import Self
 
-from scipy.sparse import coo_array, csr_array, eye_array
+from scipy.sparse import coo_array, csr_array, eye_array, kron
 from pyformlang.finite_automaton import (
     NondeterministicFiniteAutomaton,
     State,
@@ -98,3 +98,33 @@ class AdjacencyMatrixFA:
             return True
         closure = self._transitive_closure()
         return closure[list(self.start_states)][:, list(self.final_states)].nnz == 0
+
+    def intersect_automata(
+        automaton1: AdjacencyMatrixFA, automaton2: AdjacencyMatrixFA
+    ) -> AdjacencyMatrixFA:
+        n1, n2 = automaton1.states_count, automaton2.states_count
+        common_symbols = automaton1.matrices.keys() & automaton2.matrices.keys()
+        matrices = {
+            symbol: kron(
+                automaton1.matrices[symbol],
+                automaton2.matrices[symbol],
+                format="csr",
+            ).astype(bool)
+            for symbol in common_symbols
+        }
+        start_states = {
+            i * n2 + j for i in automaton1.start_states for j in automaton2.start_states
+        }
+        final_states = {
+            i * n2 + j for i in automaton1.final_states for j in automaton2.final_states
+        }
+
+        states = {
+            State((s1, s2)): i1 * n2 + i2
+            for s1, i1 in automaton1.states.items()
+            for s2, i2 in automaton2.states.items()
+        }
+
+        return AdjacencyMatrixFA.from_matrices(
+            matrices, start_states, final_states, n1 * n2, states
+        )
