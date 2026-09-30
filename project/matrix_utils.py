@@ -1,5 +1,6 @@
 from collections.abc import Iterable
 from typing import Self
+import numpy as np
 
 from networkx import MultiDiGraph
 from pyformlang.finite_automaton import (
@@ -132,21 +133,21 @@ def tensor_based_rpq(
     regex_fa = AdjacencyMatrixFA(regex_to_dfa(regex))
 
     intersection = intersect_automata(graph_fa, regex_fa)
-    closure = intersection.transitive_closure()
+    closure = intersection.transitive_closure().tocoo()
 
     n2 = regex_fa.states_count
     idx_to_graph_state = {idx: state for state, idx in graph_fa.states.items()}
 
+    mask = np.isin(closure.row, list(intersection.start_states)) & np.isin(
+        closure.col, list(intersection.final_states)
+    )
+
     result: set[tuple[int, int]] = set()
-    for s in intersection.start_states:
-        graph_start_idx = s
-        for f in intersection.final_states:
-            if closure[s, f]:
-                graph_final_idx = f
-                result.add(
-                    (
-                        idx_to_graph_state[graph_start_idx].value,
-                        idx_to_graph_state[graph_final_idx].value,
-                    )
-                )
+    for row, col in zip(closure.row[mask].tolist(), closure.col[mask].tolist()):
+        result.add(
+            (
+                idx_to_graph_state[row // n2].value,
+                idx_to_graph_state[col // n2].value,
+            )
+        )
     return result
