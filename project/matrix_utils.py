@@ -1,12 +1,15 @@
 from collections.abc import Iterable
 from typing import Self
 
-from scipy.sparse import coo_array, csr_array, eye_array, kron
+from networkx import MultiDiGraph
 from pyformlang.finite_automaton import (
     NondeterministicFiniteAutomaton,
     State,
     Symbol,
 )
+from scipy.sparse import coo_array, csr_array, eye_array, kron
+
+from project.automata_utils import graph_to_nfa, regex_to_dfa
 
 
 class AdjacencyMatrixFA:
@@ -82,7 +85,7 @@ class AdjacencyMatrixFA:
         reached = set(current.nonzero()[1])
         return bool(reached & self.final_states)
 
-    def _transitive_closure(self) -> csr_array:
+    def transitive_closure(self) -> csr_array:
         closure = eye_array(self.states_count, dtype=bool, format="csr")
         for matrix in self.matrices.values():
             closure = (closure + matrix).astype(bool)
@@ -96,7 +99,7 @@ class AdjacencyMatrixFA:
     def is_empty(self) -> bool:
         if not self.start_states or not self.final_states:
             return True
-        closure = self._transitive_closure()
+        closure = self.transitive_closure()
         return closure[list(self.start_states)][:, list(self.final_states)].nnz == 0
 
 
@@ -120,3 +123,30 @@ def intersect_automata(
     return AdjacencyMatrixFA.from_matrices(
         matrices, start_states, final_states, n1 * n2
     )
+
+
+def tensor_based_rpq(
+    regex: str, graph: MultiDiGraph, start_nodes: set[int], final_nodes: set[int]
+) -> set[tuple[int, int]]:
+    graph_fa = AdjacencyMatrixFA(graph_to_nfa(graph, start_nodes, final_nodes))
+    regex_fa = AdjacencyMatrixFA(regex_to_dfa(regex))
+
+    intersection = intersect_automata(graph_fa, regex_fa)
+    closure = intersection.transitive_closure()
+
+    n2 = regex_fa.states_count
+    idx_to_graph_state = {idx: state for state, idx in graph_fa.states.items()}
+
+    result: set[tuple[int, int]] = set()
+    for s in intersection.start_states:
+        graph_start_idx = s
+        for f in intersection.final_states:
+            if closure[s, f]:
+                graph_final_idx = f
+                result.add(
+                    (
+                        idx_to_graph_state[graph_start_idx].value,
+                        idx_to_graph_state[graph_final_idx].value,
+                    )
+                )
+    return result
