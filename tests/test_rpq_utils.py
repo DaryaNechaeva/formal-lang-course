@@ -1,8 +1,6 @@
 import pytest
 from networkx import MultiDiGraph
-from pyformlang.finite_automaton import Symbol
 
-from project.automata_utils import graph_to_nfa, regex_to_dfa
 from project.rpq_utils import ms_bfs_based_rpq, tensor_based_rpq
 
 
