@@ -3,7 +3,8 @@ from networkx import MultiDiGraph
 from pyformlang.finite_automaton import Symbol
 
 from project.automata_utils import graph_to_nfa, regex_to_dfa
-from project.matrix_utils import AdjacencyMatrixFA, intersect_automata, tensor_based_rpq
+from project.matrix_utils import AdjacencyMatrixFA, intersect_automata
+from project.rpq_utils import tensor_based_rpq
 
 
 @pytest.fixture
