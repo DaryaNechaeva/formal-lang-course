@@ -27,18 +27,12 @@ def cfg_to_weak_normal_form(cfg: pyformlang.cfg.CFG) -> pyformlang.cfg.CFG:
     return result_cfg.remove_useless_symbols()
 
 
-def hellings_based_cfpq(
-    cfg: pyformlang.cfg.CFG,
-    graph: nx.DiGraph,
-    start_nodes: set[int] = None,
-    final_nodes: set[int] = None,
-) -> set[tuple[int, int]]:
+def _parse_cfg_rules(cfg):
     cfg = cfg_to_weak_normal_form(cfg)
 
     term_rules = defaultdict(set)
     eps_rules = set()
-    left_rules = defaultdict(set)
-    right_rules = defaultdict(set)
+    bin_rules = []
 
     for p in cfg.productions:
         if len(p.body) == 0:
@@ -46,9 +40,24 @@ def hellings_based_cfpq(
         elif len(p.body) == 1 and isinstance(p.body[0], Terminal):
             term_rules[p.body[0].value].add(p.head)
         elif len(p.body) == 2:
-            first, second = p.body
-            left_rules[first].add((p.head, second))
-            right_rules[second].add((p.head, first))
+            bin_rules.append((p.head, p.body[0], p.body[1]))
+
+    return cfg, term_rules, eps_rules, bin_rules
+
+
+def hellings_based_cfpq(
+    cfg: pyformlang.cfg.CFG,
+    graph: nx.DiGraph,
+    start_nodes: set[int] = None,
+    final_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    cfg, term_rules, eps_rules, bin_rules = _parse_cfg_rules(cfg)
+
+    left_rules = defaultdict(set)
+    right_rules = defaultdict(set)
+    for head, left, right in bin_rules:
+        left_rules[left].add((head, right))
+        right_rules[right].add((head, left))
 
     nfa = graph_to_nfa(graph)
 
@@ -103,19 +112,7 @@ def matrix_based_cfpq(
     final_nodes: set[int] = None,
 ) -> set[tuple[int, int]]:
 
-    cfg = cfg_to_weak_normal_form(cfg)
-
-    term_rules = defaultdict(set)
-    eps_rules = set()
-    bin_rules = []
-
-    for p in cfg.productions:
-        if len(p.body) == 0:
-            eps_rules.add(p.head)
-        elif len(p.body) == 1 and isinstance(p.body[0], Terminal):
-            term_rules[p.body[0].value].add(p.head)
-        elif len(p.body) == 2:
-            bin_rules.append((p.head, p.body[0], p.body[1]))
+    cfg, term_rules, eps_rules, bin_rules = _parse_cfg_rules(cfg)
 
     nodes = list(graph.nodes())
     n = len(nodes)
