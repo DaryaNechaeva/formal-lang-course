@@ -6,6 +6,8 @@ import pyformlang.cfg
 from pyformlang.cfg import Production, Terminal, Variable
 from pyformlang.finite_automaton import State
 
+from scipy.sparse import csr_array, eye_array, coo_array
+
 from project.automata_utils import graph_to_nfa
 
 
@@ -92,3 +94,84 @@ def hellings_based_cfpq(
         for u, var, v in derived
         if var == start_sym and u.value in starts and v.value in finals
     }
+
+
+def matrix_based_cfpq(
+    cfg: pyformlang.cfg.CFG,
+    graph: nx.DiGraph,
+    start_nodes: set[int] = None,
+    final_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+
+    cfg = cfg_to_weak_normal_form(cfg)
+
+    term_rules = defaultdict(set)
+    eps_rules = set()
+    bin_rules = []
+
+    for p in cfg.productions:
+        if len(p.body) == 0:
+            eps_rules.add(p.head)
+        elif len(p.body) == 1 and isinstance(p.body[0], Terminal):
+            term_rules[p.body[0].value].add(p.head)
+        elif len(p.body) == 2:
+            bin_rules.append((p.head, p.body[0], p.body[1]))
+
+    nodes = list(graph.nodes())
+    n = len(nodes)
+    if n == 0:
+        return set()
+
+    node_to_idx = {node: i for i, node in enumerate(nodes)}
+
+    matrices = {var: csr_array((n, n), dtype=bool) for var in cfg.variables}
+
+    term_coords = defaultdict(lambda: ([], []))
+    for u, v, data in graph.edges(data=True):
+        label = data.get("label")
+        if label in term_rules:
+            for var in term_rules[label]:
+                term_coords[var][0].append(node_to_idx[u])
+                term_coords[var][1].append(node_to_idx[v])
+
+    for var, (rows, cols) in term_coords.items():
+        if rows:
+            data = [True] * len(rows)
+            matrices[var] = coo_array(
+                (data, (rows, cols)), shape=(n, n), dtype=bool
+            ).tocsr()
+
+    if eps_rules:
+        identity = eye_array(n, dtype=bool, format="csr")
+        for var in eps_rules:
+            matrices[var] = matrices[var] + identity
+            matrices[var] = matrices[var].astype(bool)
+
+    changed = True
+    while changed:
+        changed = False
+        for head, left, right in bin_rules:
+            new_paths = matrices[left] @ matrices[right]
+
+            old_nnz = matrices[head].nnz
+
+            matrices[head] = matrices[head] + new_paths
+            matrices[head] = matrices[head].astype(bool)
+
+            if matrices[head].nnz > old_nnz:
+                changed = True
+
+    starts = set(graph.nodes()) if not start_nodes else set(start_nodes)
+    finals = set(graph.nodes()) if not final_nodes else set(final_nodes)
+    start_sym = cfg.start_symbol
+
+    result = set()
+    if start_sym in matrices:
+        start_matrix = matrices[start_sym].tocoo()
+        for u_idx, v_idx in zip(start_matrix.row, start_matrix.col):
+            u = nodes[u_idx]
+            v = nodes[v_idx]
+            if u in starts and v in finals:
+                result.add((u, v))
+
+    return result
