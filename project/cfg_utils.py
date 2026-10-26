@@ -111,7 +111,6 @@ def matrix_based_cfpq(
     start_nodes: set[int] = None,
     final_nodes: set[int] = None,
 ) -> set[tuple[int, int]]:
-
     cfg, term_rules, eps_rules, bin_rules = _parse_cfg_rules(cfg)
 
     nodes = list(graph.nodes())
