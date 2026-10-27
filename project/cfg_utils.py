@@ -4,11 +4,11 @@ import networkx as nx
 import pyformlang
 import pyformlang.cfg
 from pyformlang.cfg import Production, Terminal, Variable
-from pyformlang.finite_automaton import State
-
-from scipy.sparse import csr_array, eye_array, coo_array
+from pyformlang.finite_automaton import State, Symbol
+from scipy.sparse import csr_array, eye_array
 
 from project.automata_utils import graph_to_nfa
+from project.matrix_utils import AdjacencyMatrixFA
 
 
 def cfg_to_weak_normal_form(cfg: pyformlang.cfg.CFG) -> pyformlang.cfg.CFG:
@@ -112,30 +112,20 @@ def matrix_based_cfpq(
     final_nodes: set[int] = None,
 ) -> set[tuple[int, int]]:
     cfg, term_rules, eps_rules, bin_rules = _parse_cfg_rules(cfg)
+    nfa = graph_to_nfa(graph)
+    graph_fa = AdjacencyMatrixFA(nfa)
+    n = graph_fa.states_count
 
-    nodes = list(graph.nodes())
-    n = len(nodes)
     if n == 0:
         return set()
 
-    node_to_idx = {node: i for i, node in enumerate(nodes)}
-
     matrices = {var: csr_array((n, n), dtype=bool) for var in cfg.variables}
 
-    term_coords = defaultdict(lambda: ([], []))
-    for u, v, data in graph.edges(data=True):
-        label = data.get("label")
-        if label in term_rules:
-            for var in term_rules[label]:
-                term_coords[var][0].append(node_to_idx[u])
-                term_coords[var][1].append(node_to_idx[v])
-
-    for var, (rows, cols) in term_coords.items():
-        if rows:
-            data = [True] * len(rows)
-            matrices[var] = coo_array(
-                (data, (rows, cols)), shape=(n, n), dtype=bool
-            ).tocsr()
+    for label, heads in term_rules.items():
+        transitions = graph_fa.matrices.get(Symbol(label))
+        if transitions is not None:
+            for head in heads:
+                matrices[head] = (matrices[head] + transitions).astype(bool)
 
     if eps_rules:
         identity = eye_array(n, dtype=bool, format="csr")
@@ -164,9 +154,11 @@ def matrix_based_cfpq(
     result = set()
     if start_sym in matrices:
         start_matrix = matrices[start_sym].tocoo()
+        idx_to_node = {idx: state.value for state, idx in graph_fa.states.items()}
+
         for u_idx, v_idx in zip(start_matrix.row, start_matrix.col):
-            u = nodes[u_idx]
-            v = nodes[v_idx]
+            u = idx_to_node[u_idx]
+            v = idx_to_node[v_idx]
             if u in starts and v in finals:
                 result.add((u, v))
 
