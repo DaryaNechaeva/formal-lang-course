@@ -1,6 +1,14 @@
+import pytest
 import networkx as nx
 from pyformlang.cfg import CFG, Variable, Terminal, Epsilon
-from project.cfg_utils import cfg_to_weak_normal_form, hellings_based_cfpq
+
+from project.cfg_utils import (
+    cfg_to_weak_normal_form,
+    hellings_based_cfpq,
+    matrix_based_cfpq,
+)
+
+CFPQ_ALGORITHMS = [hellings_based_cfpq, matrix_based_cfpq]
 
 
 def test_weak_normal_form_structure():
@@ -38,7 +46,8 @@ def test_weak_normal_form_preserves_epsilon():
     assert wnf_cfg.contains([Epsilon()])
 
 
-def test_hellings_simple_path():
+@pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
+def test_cfpq_simple_path(algorithm):
     """Check a simple path without cycles."""
     graph = nx.DiGraph()
     graph.add_edge(0, 1, label="a")
@@ -50,22 +59,24 @@ def test_hellings_simple_path():
         B -> b
     """)
 
-    result = hellings_based_cfpq(cfg, graph)
+    result = algorithm(cfg, graph)
     assert result == {(0, 2)}
 
 
-def test_hellings_empty_start_final():
+@pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
+def test_cfpq_empty_start_final(algorithm):
     """Check that empty start_nodes and final_nodes mean all nodes."""
     graph = nx.DiGraph()
     graph.add_edge(0, 1, label="a")
 
     cfg = CFG.from_text("S -> a")
 
-    result = hellings_based_cfpq(cfg, graph, start_nodes=set(), final_nodes=set())
+    result = algorithm(cfg, graph, start_nodes=set(), final_nodes=set())
     assert result == {(0, 1)}
 
 
-def test_hellings_specific_start_final():
+@pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
+def test_cfpq_specific_start_final(algorithm):
     """Check filtering by specified start and final nodes."""
     graph = nx.DiGraph()
     graph.add_edge(0, 1, label="a")
@@ -73,11 +84,12 @@ def test_hellings_specific_start_final():
 
     cfg = CFG.from_text("S -> a")
 
-    result = hellings_based_cfpq(cfg, graph, start_nodes={0}, final_nodes={1})
+    result = algorithm(cfg, graph, start_nodes={0}, final_nodes={1})
     assert result == {(0, 1)}
 
 
-def test_hellings_cycle():
+@pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
+def test_cfpq_cycle(algorithm):
     """Check the algorithm on a graph with a cycle."""
     graph = nx.DiGraph()
     graph.add_edge(0, 1, label="a")
@@ -89,7 +101,7 @@ def test_hellings_cycle():
         A -> a
     """)
 
-    result = hellings_based_cfpq(cfg, graph)
+    result = algorithm(cfg, graph)
 
     assert (0, 1) in result
     assert (1, 0) in result
@@ -97,12 +109,33 @@ def test_hellings_cycle():
     assert (1, 1) in result
 
 
-def test_hellings_epsilon_rule():
+@pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
+def test_cfpq_epsilon_rule(algorithm):
     """Check that epsilon rules produce zero-length path loops."""
     graph = nx.DiGraph()
     graph.add_edge(0, 1, label="a")
 
     cfg = CFG.from_text("S -> epsilon")
 
-    result = hellings_based_cfpq(cfg, graph, start_nodes={0}, final_nodes={0})
+    result = algorithm(cfg, graph, start_nodes={0}, final_nodes={0})
     assert result == {(0, 0)}
+
+
+@pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
+def test_cfpq_empty_graph(algorithm):
+    """Check that an empty graph returns an empty set, not an error."""
+    graph = nx.DiGraph()
+    cfg = CFG.from_text("S -> a")
+    result = algorithm(cfg, graph)
+    assert result == set()
+
+
+@pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
+def test_cfpq_no_paths(algorithm):
+    """Check when grammar and graph exist, but no paths match."""
+    graph = nx.DiGraph()
+    graph.add_edge(0, 1, label="a")
+
+    cfg = CFG.from_text("S -> b")
+    result = algorithm(cfg, graph)
+    assert result == set()

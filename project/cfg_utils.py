@@ -4,9 +4,11 @@ import networkx as nx
 import pyformlang
 import pyformlang.cfg
 from pyformlang.cfg import Production, Terminal, Variable
-from pyformlang.finite_automaton import State
+from pyformlang.finite_automaton import State, Symbol
+from scipy.sparse import csr_array, eye_array
 
 from project.automata_utils import graph_to_nfa
+from project.matrix_utils import AdjacencyMatrixFA
 
 
 def cfg_to_weak_normal_form(cfg: pyformlang.cfg.CFG) -> pyformlang.cfg.CFG:
@@ -25,18 +27,12 @@ def cfg_to_weak_normal_form(cfg: pyformlang.cfg.CFG) -> pyformlang.cfg.CFG:
     return result_cfg.remove_useless_symbols()
 
 
-def hellings_based_cfpq(
-    cfg: pyformlang.cfg.CFG,
-    graph: nx.DiGraph,
-    start_nodes: set[int] = None,
-    final_nodes: set[int] = None,
-) -> set[tuple[int, int]]:
+def _parse_cfg_rules(cfg):
     cfg = cfg_to_weak_normal_form(cfg)
 
     term_rules = defaultdict(set)
     eps_rules = set()
-    left_rules = defaultdict(set)
-    right_rules = defaultdict(set)
+    bin_rules = []
 
     for p in cfg.productions:
         if len(p.body) == 0:
@@ -44,9 +40,24 @@ def hellings_based_cfpq(
         elif len(p.body) == 1 and isinstance(p.body[0], Terminal):
             term_rules[p.body[0].value].add(p.head)
         elif len(p.body) == 2:
-            first, second = p.body
-            left_rules[first].add((p.head, second))
-            right_rules[second].add((p.head, first))
+            bin_rules.append((p.head, p.body[0], p.body[1]))
+
+    return cfg, term_rules, eps_rules, bin_rules
+
+
+def hellings_based_cfpq(
+    cfg: pyformlang.cfg.CFG,
+    graph: nx.DiGraph,
+    start_nodes: set[int] = None,
+    final_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    cfg, term_rules, eps_rules, bin_rules = _parse_cfg_rules(cfg)
+
+    left_rules = defaultdict(set)
+    right_rules = defaultdict(set)
+    for head, left, right in bin_rules:
+        left_rules[left].add((head, right))
+        right_rules[right].add((head, left))
 
     nfa = graph_to_nfa(graph)
 
@@ -92,3 +103,63 @@ def hellings_based_cfpq(
         for u, var, v in derived
         if var == start_sym and u.value in starts and v.value in finals
     }
+
+
+def matrix_based_cfpq(
+    cfg: pyformlang.cfg.CFG,
+    graph: nx.DiGraph,
+    start_nodes: set[int] = None,
+    final_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    cfg, term_rules, eps_rules, bin_rules = _parse_cfg_rules(cfg)
+    nfa = graph_to_nfa(graph)
+    graph_fa = AdjacencyMatrixFA(nfa)
+    n = graph_fa.states_count
+
+    if n == 0:
+        return set()
+
+    matrices = {var: csr_array((n, n), dtype=bool) for var in cfg.variables}
+
+    for label, heads in term_rules.items():
+        transitions = graph_fa.matrices.get(Symbol(label))
+        if transitions is not None:
+            for head in heads:
+                matrices[head] = (matrices[head] + transitions).astype(bool)
+
+    if eps_rules:
+        identity = eye_array(n, dtype=bool, format="csr")
+        for var in eps_rules:
+            matrices[var] = matrices[var] + identity
+            matrices[var] = matrices[var].astype(bool)
+
+    changed = True
+    while changed:
+        changed = False
+        for head, left, right in bin_rules:
+            new_paths = matrices[left] @ matrices[right]
+
+            old_nnz = matrices[head].nnz
+
+            matrices[head] = matrices[head] + new_paths
+            matrices[head] = matrices[head].astype(bool)
+
+            if matrices[head].nnz > old_nnz:
+                changed = True
+
+    starts = set(graph.nodes()) if not start_nodes else set(start_nodes)
+    finals = set(graph.nodes()) if not final_nodes else set(final_nodes)
+    start_sym = cfg.start_symbol
+
+    result = set()
+    if start_sym in matrices:
+        start_matrix = matrices[start_sym].tocoo()
+        idx_to_node = {idx: state.value for state, idx in graph_fa.states.items()}
+
+        for u_idx, v_idx in zip(start_matrix.row, start_matrix.col):
+            u = idx_to_node[u_idx]
+            v = idx_to_node[v_idx]
+            if u in starts and v in finals:
+                result.add((u, v))
+
+    return result
