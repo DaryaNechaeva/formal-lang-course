@@ -3,6 +3,7 @@ from collections import defaultdict, deque
 import networkx as nx
 import pyformlang
 import pyformlang.cfg
+import numpy as np
 from pyformlang.cfg import CFG
 from pyformlang.rsa import Box, RecursiveAutomaton
 from pyformlang.cfg import Production, Terminal, Variable
@@ -203,3 +204,77 @@ def ebnf_to_rsm(ebnf: str) -> RecursiveAutomaton:
         by_head[head.strip()].append(body.strip())
 
     return _build_rsm(by_head, next(iter(by_head)))
+
+
+def tensor_based_cfpq(
+    rsm: RecursiveAutomaton,
+    graph: nx.DiGraph,
+    start_nodes: set[int] = None,
+    final_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    graph_fa = AdjacencyMatrixFA(graph_to_nfa(graph))
+    n = graph_fa.states_count
+    if n == 0:
+        return set()
+
+    relations = {label: csr_array((n, n), dtype=bool) for label in rsm.labels}
+    box_fas = {label: AdjacencyMatrixFA(box.dfa) for label, box in rsm.boxes.items()}
+
+    base = {}
+    for label, box_fa in box_fas.items():
+        m = box_fa.states_count
+        base[label] = csr_array((n * m, n * m), dtype=bool)
+        for symbol, box_mat in box_fa.matrices.items():
+            if symbol not in relations and symbol in graph_fa.matrices:
+                base[label] = (
+                    base[label] + kron(graph_fa.matrices[symbol], box_mat, format="csr")
+                ).astype(bool)
+
+    changed = True
+    while changed:
+        changed = False
+        for label, box_fa in box_fas.items():
+            m = box_fa.states_count
+            N = n * m
+
+            adjacency = base[label]
+            for symbol, box_mat in box_fa.matrices.items():
+                if symbol in relations:
+                    adjacency = (
+                        adjacency + kron(relations[symbol], box_mat, format="csr")
+                    ).astype(bool)
+
+            new_facts = csr_array((n, n), dtype=bool)
+            for s in box_fa.start_states:
+                front = csr_array(
+                    ([True] * n, (range(n), np.arange(n) * m + s)),
+                    shape=(n, N),
+                    dtype=bool,
+                )
+                visited = front
+                while front.nnz:
+                    new_reach = (front @ adjacency).astype(bool)
+                    front = (new_reach - new_reach.multiply(visited)).astype(bool)
+                    visited = (visited + front).astype(bool)
+                for f in box_fa.final_states:
+                    new_facts = (new_facts + visited[:, f::m]).astype(bool)
+
+            old_nnz = relations[label].nnz
+            relations[label] = (relations[label] + new_facts).astype(bool)
+            if relations[label].nnz > old_nnz:
+                changed = True
+
+    start_symbol = rsm.initial_label
+    if start_symbol not in relations:
+        return set()
+
+    idx_to_node = {idx: state.value for state, idx in graph_fa.states.items()}
+    starts = set(graph.nodes()) if not start_nodes else set(start_nodes)
+    finals = set(graph.nodes()) if not final_nodes else set(final_nodes)
+
+    rows, cols = relations[start_symbol].nonzero()
+    return {
+        (u, v)
+        for u_i, v_i in zip(rows.tolist(), cols.tolist())
+        if (u := idx_to_node[u_i]) in starts and (v := idx_to_node[v_i]) in finals
+    }
