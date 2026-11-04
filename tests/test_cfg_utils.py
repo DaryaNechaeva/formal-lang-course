@@ -4,11 +4,19 @@ from pyformlang.cfg import CFG, Variable, Terminal, Epsilon
 
 from project.cfg_utils import (
     cfg_to_weak_normal_form,
+    cfg_to_rsm,
+    ebnf_to_rsm,
     hellings_based_cfpq,
     matrix_based_cfpq,
+    tensor_based_cfpq,
 )
 
-CFPQ_ALGORITHMS = [hellings_based_cfpq, matrix_based_cfpq]
+
+def _tensor_via_cfg(cfg, graph, start_nodes=None, final_nodes=None):
+    return tensor_based_cfpq(cfg_to_rsm(cfg), graph, start_nodes, final_nodes)
+
+
+CFPQ_ALGORITHMS = [hellings_based_cfpq, matrix_based_cfpq, _tensor_via_cfg]
 
 
 def test_weak_normal_form_structure():
@@ -59,8 +67,7 @@ def test_cfpq_simple_path(algorithm):
         B -> b
     """)
 
-    result = algorithm(cfg, graph)
-    assert result == {(0, 2)}
+    assert algorithm(cfg, graph) == {(0, 2)}
 
 
 @pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
@@ -71,8 +78,7 @@ def test_cfpq_empty_start_final(algorithm):
 
     cfg = CFG.from_text("S -> a")
 
-    result = algorithm(cfg, graph, start_nodes=set(), final_nodes=set())
-    assert result == {(0, 1)}
+    assert algorithm(cfg, graph, start_nodes=set(), final_nodes=set()) == {(0, 1)}
 
 
 @pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
@@ -84,8 +90,7 @@ def test_cfpq_specific_start_final(algorithm):
 
     cfg = CFG.from_text("S -> a")
 
-    result = algorithm(cfg, graph, start_nodes={0}, final_nodes={1})
-    assert result == {(0, 1)}
+    assert algorithm(cfg, graph, start_nodes={0}, final_nodes={1}) == {(0, 1)}
 
 
 @pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
@@ -117,8 +122,7 @@ def test_cfpq_epsilon_rule(algorithm):
 
     cfg = CFG.from_text("S -> epsilon")
 
-    result = algorithm(cfg, graph, start_nodes={0}, final_nodes={0})
-    assert result == {(0, 0)}
+    assert algorithm(cfg, graph, start_nodes={0}, final_nodes={0}) == {(0, 0)}
 
 
 @pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
@@ -126,8 +130,7 @@ def test_cfpq_empty_graph(algorithm):
     """Check that an empty graph returns an empty set, not an error."""
     graph = nx.DiGraph()
     cfg = CFG.from_text("S -> a")
-    result = algorithm(cfg, graph)
-    assert result == set()
+    assert algorithm(cfg, graph) == set()
 
 
 @pytest.mark.parametrize("algorithm", CFPQ_ALGORITHMS)
@@ -137,5 +140,87 @@ def test_cfpq_no_paths(algorithm):
     graph.add_edge(0, 1, label="a")
 
     cfg = CFG.from_text("S -> b")
-    result = algorithm(cfg, graph)
-    assert result == set()
+    assert algorithm(cfg, graph) == set()
+
+
+def test_cfg_to_rsm_structure():
+    """Check that RSM built from CFG has the start symbol and a box for it."""
+    cfg = CFG.from_text("""
+        S -> a S b | epsilon
+    """)
+    rsm = cfg_to_rsm(cfg)
+
+    assert rsm.initial_label.value == "S"
+    labels = {label.value for label in rsm.labels}
+    assert "S" in labels
+    assert len(rsm.boxes) >= 1
+
+
+def test_cfg_to_rsm_multiple_nonterminals():
+    """Check that a box is created for every nonterminal."""
+    cfg = CFG.from_text("""
+        S -> A B
+        A -> a
+        B -> b
+    """)
+    rsm = cfg_to_rsm(cfg)
+
+    labels = {label.value for label in rsm.labels}
+    assert {"S", "A", "B"} <= labels
+    assert rsm.initial_label.value == "S"
+
+
+def test_cfg_to_rsm_preserves_language():
+    """Check that RSM built from CFG accepts the same words as CFG."""
+    cfg = CFG.from_text("""
+        S -> a S b | a b
+    """)
+    rsm = cfg_to_rsm(cfg)
+
+    graph = nx.DiGraph()
+    graph.add_edge(0, 1, label="a")
+    graph.add_edge(1, 2, label="a")
+    graph.add_edge(2, 3, label="b")
+    graph.add_edge(3, 4, label="b")
+
+    result = tensor_based_cfpq(rsm, graph)
+    assert (1, 3) in result
+    assert (0, 4) in result
+
+
+def test_ebnf_to_rsm_structure():
+    """Check that RSM built from EBNF has the start symbol."""
+    rsm = ebnf_to_rsm("S -> (a | b)* c")
+
+    assert rsm.initial_label.value == "S"
+    labels = {label.value for label in rsm.labels}
+    assert "S" in labels
+
+
+def test_ebnf_to_rsm_accepts_word():
+    """Check that RSM built from EBNF accepts a word produced by this EBNF."""
+    rsm = ebnf_to_rsm("S -> a b")
+
+    graph = nx.DiGraph()
+    graph.add_edge(0, 1, label="a")
+    graph.add_edge(1, 2, label="b")
+
+    assert tensor_based_cfpq(rsm, graph) == {(0, 2)}
+
+
+def test_tensor_cfpq_nested_ab():
+    """Check a^n b^n on a chain graph (tensor-specific)."""
+    cfg = CFG.from_text("""
+        S -> a S b | a b
+    """)
+    rsm = cfg_to_rsm(cfg)
+
+    graph = nx.DiGraph()
+    graph.add_edge(0, 1, label="a")
+    graph.add_edge(1, 2, label="a")
+    graph.add_edge(2, 3, label="b")
+    graph.add_edge(3, 4, label="b")
+
+    result = tensor_based_cfpq(rsm, graph)
+    assert (1, 3) in result
+    assert (0, 4) in result
