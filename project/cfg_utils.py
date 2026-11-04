@@ -167,14 +167,7 @@ def matrix_based_cfpq(
     return result
 
 
-def cfg_to_rsm(cfg: CFG) -> RecursiveAutomaton:
-    wnf = cfg_to_weak_normal_form(cfg)
-
-    by_head: dict[str, list[str]] = defaultdict(list)
-    for prod in wnf.productions:
-        body = " ".join(sym.value for sym in prod.body) if prod.body else "epsilon"
-        by_head[prod.head.value].append(body)
-
+def _build_rsm(by_head: dict[str, list[str]], initial_label: str) -> RecursiveAutomaton:
     boxes, labels = set(), set()
     for head, bodies in by_head.items():
         combined = " | ".join(f"({b})" for b in bodies)
@@ -184,9 +177,20 @@ def cfg_to_rsm(cfg: CFG) -> RecursiveAutomaton:
 
     return RecursiveAutomaton(
         labels=labels,
-        initial_label=Symbol(wnf.start_symbol.value),
+        initial_label=Symbol(initial_label),
         boxes=boxes,
     )
+
+
+def cfg_to_rsm(cfg: CFG) -> RecursiveAutomaton:
+    wnf = cfg_to_weak_normal_form(cfg)
+
+    by_head: dict[str, list[str]] = defaultdict(list)
+    for prod in wnf.productions:
+        body = " ".join(sym.value for sym in prod.body) if prod.body else "epsilon"
+        by_head[prod.head.value].append(body)
+
+    return _build_rsm(by_head, wnf.start_symbol.value)
 
 
 def ebnf_to_rsm(ebnf: str) -> RecursiveAutomaton:
@@ -198,15 +202,4 @@ def ebnf_to_rsm(ebnf: str) -> RecursiveAutomaton:
         head, body = line.split("->", 1)
         by_head[head.strip()].append(body.strip())
 
-    boxes, labels = set(), set()
-    for head, bodies in by_head.items():
-        combined = " | ".join(f"({b})" for b in bodies)
-        dfa = regex_to_dfa(combined)
-        boxes.add(Box(dfa, Symbol(head)))
-        labels.add(Symbol(head))
-
-    return RecursiveAutomaton(
-        labels=labels,
-        initial_label=Symbol(next(iter(by_head))),
-        boxes=boxes,
-    )
+    return _build_rsm(by_head, next(iter(by_head)))
