@@ -3,11 +3,13 @@ from collections import defaultdict, deque
 import networkx as nx
 import pyformlang
 import pyformlang.cfg
+from pyformlang.cfg import CFG
+from pyformlang.rsa import Box, RecursiveAutomaton
 from pyformlang.cfg import Production, Terminal, Variable
 from pyformlang.finite_automaton import State, Symbol
-from scipy.sparse import csr_array, eye_array
+from scipy.sparse import csr_array, eye_array, kron
 
-from project.automata_utils import graph_to_nfa
+from project.automata_utils import graph_to_nfa, regex_to_dfa
 from project.matrix_utils import AdjacencyMatrixFA
 
 
@@ -163,3 +165,48 @@ def matrix_based_cfpq(
                 result.add((u, v))
 
     return result
+
+
+def cfg_to_rsm(cfg: CFG) -> RecursiveAutomaton:
+    wnf = cfg_to_weak_normal_form(cfg)
+
+    by_head: dict[str, list[str]] = defaultdict(list)
+    for prod in wnf.productions:
+        body = " ".join(sym.value for sym in prod.body) if prod.body else "epsilon"
+        by_head[prod.head.value].append(body)
+
+    boxes, labels = set(), set()
+    for head, bodies in by_head.items():
+        combined = " | ".join(f"({b})" for b in bodies)
+        dfa = regex_to_dfa(combined)
+        boxes.add(Box(dfa, Symbol(head)))
+        labels.add(Symbol(head))
+
+    return RecursiveAutomaton(
+        labels=labels,
+        initial_label=Symbol(wnf.start_symbol.value),
+        boxes=boxes,
+    )
+
+
+def ebnf_to_rsm(ebnf: str) -> RecursiveAutomaton:
+    by_head: dict[str, list[str]] = defaultdict(list)
+    for line in ebnf.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        head, body = line.split("->", 1)
+        by_head[head.strip()].append(body.strip())
+
+    boxes, labels = set(), set()
+    for head, bodies in by_head.items():
+        combined = " | ".join(f"({b})" for b in bodies)
+        dfa = regex_to_dfa(combined)
+        boxes.add(Box(dfa, Symbol(head)))
+        labels.add(Symbol(head))
+
+    return RecursiveAutomaton(
+        labels=labels,
+        initial_label=Symbol(next(iter(by_head))),
+        boxes=boxes,
+    )
