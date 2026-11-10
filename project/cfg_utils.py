@@ -278,3 +278,83 @@ def tensor_based_cfpq(
         for u_i, v_i in zip(rows.tolist(), cols.tolist())
         if (u := idx_to_node[u_i]) in starts and (v := idx_to_node[v_i]) in finals
     }
+
+
+def gll_based_cfpq(
+    rsm: RecursiveAutomaton,
+    graph: nx.DiGraph,
+    start_nodes: set[int] = None,
+    final_nodes: set[int] = None,
+) -> set[tuple[int, int]]:
+    graph_edges = defaultdict(lambda: defaultdict(list))
+    for u, v, data in graph.edges(data=True):
+        label = data.get("label")
+        if label is not None:
+            graph_edges[u][str(label)].append(v)
+
+    box_trans = {}
+    box_starts = {}
+    box_finals = {}
+    for label, box in rsm.boxes.items():
+        dfa = box.dfa
+        box_trans[label] = dfa.to_dict()
+        box_starts[label] = dfa.start_state
+        box_finals[label] = set(dfa.final_states)
+
+    nonterminals = set(rsm.labels)
+
+    gss_edges = defaultdict(set)
+    gss_final_pos = defaultdict(set)
+
+    queue = deque()
+    visited = set()
+
+    def push(u, box_label, state, gss_key):
+        desc = (u, box_label, state, gss_key)
+        if desc not in visited:
+            visited.add(desc)
+            queue.append(desc)
+
+    initial_label = rsm.initial_label
+    initial_start = box_starts[initial_label]
+    initial_finals = box_finals[initial_label]
+
+    starts = set(graph.nodes()) if not start_nodes else set(start_nodes)
+    finals = set(graph.nodes()) if not final_nodes else set(final_nodes)
+
+    for u in starts:
+        push(u, initial_label, initial_start, (initial_label, initial_start, u))
+
+    while queue:
+        u, box_label, state, gss_key = queue.popleft()
+
+        for sym, dest in box_trans[box_label].get(state, {}).items():
+            targets = [dest] if isinstance(dest, State) else list(dest)
+            for next_state in targets:
+                if sym in nonterminals:
+                    N_start = box_starts[sym]
+                    new_gss = (sym, N_start, u)
+                    edge = (next_state, gss_key)
+                    if edge not in gss_edges[new_gss]:
+                        gss_edges[new_gss].add(edge)
+                        for late_pos in gss_final_pos[new_gss]:
+                            push(late_pos, box_label, next_state, gss_key)
+                    push(u, sym, N_start, new_gss)
+                else:
+                    for v in graph_edges.get(u, {}).get(sym.value, []):
+                        push(v, box_label, next_state, gss_key)
+
+        if state in box_finals[box_label]:
+            gss_final_pos[gss_key].add(u)
+            for return_state, prev_gss in gss_edges[gss_key]:
+                push(u, prev_gss[0], return_state, prev_gss)
+
+    answer = set()
+    for u_pos, box_label, state, gss_key in visited:
+        if box_label != initial_label or state not in initial_finals:
+            continue
+        start_pos = gss_key[2]
+        if start_pos in starts and u_pos in finals:
+            answer.add((start_pos, u_pos))
+
+    return answer

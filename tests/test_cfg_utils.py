@@ -6,17 +6,26 @@ from project.cfg_utils import (
     cfg_to_weak_normal_form,
     cfg_to_rsm,
     ebnf_to_rsm,
+    gll_based_cfpq,
     hellings_based_cfpq,
     matrix_based_cfpq,
     tensor_based_cfpq,
 )
 
 
-def _tensor_via_cfg(cfg, graph, start_nodes=None, final_nodes=None):
-    return tensor_based_cfpq(cfg_to_rsm(cfg), graph, start_nodes, final_nodes)
+def _wrap_rsm(rsm_algorithm):
+    def wrapped(cfg, graph, start_nodes=None, final_nodes=None):
+        return rsm_algorithm(cfg_to_rsm(cfg), graph, start_nodes, final_nodes)
+
+    return wrapped
 
 
-CFPQ_ALGORITHMS = [hellings_based_cfpq, matrix_based_cfpq, _tensor_via_cfg]
+CFPQ_ALGORITHMS = [
+    hellings_based_cfpq,
+    matrix_based_cfpq,
+    _wrap_rsm(tensor_based_cfpq),
+    _wrap_rsm(gll_based_cfpq),
+]
 
 
 def test_weak_normal_form_structure():
@@ -224,3 +233,42 @@ def test_tensor_cfpq_nested_ab():
     result = tensor_based_cfpq(rsm, graph)
     assert (1, 3) in result
     assert (0, 4) in result
+
+
+def test_gll_left_recursion():
+    """GLL handles left-recursive grammars that LL cannot."""
+    cfg = CFG.from_text("""
+        S -> S a | a
+    """)
+    rsm = cfg_to_rsm(cfg)
+
+    graph = nx.DiGraph()
+    graph.add_edge(0, 1, label="a")
+    graph.add_edge(1, 2, label="a")
+    graph.add_edge(2, 3, label="a")
+
+    result = gll_based_cfpq(rsm, graph)
+
+    assert (0, 1) in result  # a
+    assert (0, 2) in result  # a a
+    assert (0, 3) in result  # a a a
+    assert (1, 3) in result  # a a
+
+
+def test_gll_branching_graph():
+    """GLL handles a graph with multiple edges of the same label."""
+    cfg = CFG.from_text("""
+        S -> A B
+        A -> a
+        B -> b
+    """)
+    rsm = cfg_to_rsm(cfg)
+
+    graph = nx.DiGraph()
+    graph.add_edge(0, 1, label="a")
+    graph.add_edge(0, 2, label="a")
+    graph.add_edge(1, 3, label="b")
+    graph.add_edge(2, 3, label="b")
+
+    result = gll_based_cfpq(rsm, graph)
+    assert (0, 3) in result
